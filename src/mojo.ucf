@@ -17,6 +17,15 @@ NET "led<5>" LOC = P126;
 NET "led<6>" LOC = P124;
 NET "led<7>" LOC = P123;
 
+NET "switch<1>" LOC = P50;
+NET "switch<2>" LOC = P51;
+NET "switch<3>" LOC = P41;
+NET "switch<4>" LOC = P40;
+NET "switch<5>" LOC = P35;
+NET "switch<6>" LOC = P34;
+NET "switch<7>" LOC = P33;
+NET "switch<8>" LOC = P32;
+
 NET "spi_mosi" LOC = P44;
 NET "spi_miso" LOC = P45;
 NET "spi_ss" LOC = P48;
