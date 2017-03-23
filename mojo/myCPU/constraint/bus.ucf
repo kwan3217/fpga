@@ -1,0 +1,5 @@
+NET "cpu_din" LOC = P1 | IOSTANDARD = LVTTL;
+NET "cpu_dout" LOC = P2 | IOSTANDARD = LVTTL;
+NET "cpu_addr" LOC = P5 | IOSTANDARD = LVTTL;
+NET "cpu_wr" LOC = P6 | IOSTANDARD = LVTTL;
+NET "cpu_rd" LOC = P7 | IOSTANDARD = LVTTL;

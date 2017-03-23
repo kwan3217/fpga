@@ -1,0 +1,284 @@
+module cortexM0 (
+    input clk,         // clock
+    input rst,         // reset
+    output write,      // CPU write request
+    output read,       // CPU read request
+    output address[32], // read/write address
+    output dout[32],    // write data
+    input din[32]       // read data
+  ) {
+
+  //Register names  
+  const PC=15;
+  const SP=13;
+  const LR=14;
+  
+  //APSR flag names
+  const C=29;
+  const N=31;
+  const V=28;
+  const Z=30;
+ 
+  .clk(clk), .rst(rst) {
+    dff reg[16][32]; // Program-visible Registers
+    dff apsr[32];    // Application Program Status Register (flags)
+    dff ir[32];      // Instruction register. The low 16 bits are from the first
+                     // half-word and the high 16 bits are from the second.
+    dff shift_fe1;   // TRUE if we need to shift 16 bits, because PC was unaligned in FE0
+    //This indicates what we should be doing when the cycle starts
+    fsm state={FETCH0,  //Set up to fetch the first part of the instruction. Get 32 bits.
+               FETCH1,  //Receive the 32 bits, shift if this isn't aligned, and decide if we need to get the other unaligned halfword
+               FETCH2,  //Receive the unaligned halfword
+               EXEC,    //Execute the instruction
+               MEM1,    //Do memory access first part. This is up to 32 bits, and will do it all in 1 step if it is aligned
+               MEM2     //Do second part if necessary
+              };
+  }
+  
+  //Decoding temporaries
+  sig d[4]; //register "d" address
+  sig m[4]; //register "m" address
+  sig n[4]; //register "n" address
+  sig t[4]; //register "t" address
+  sig imm5[5]; //5-bit immediate value
+  sig setflags;
+  sig result[32];
+  
+  always {
+    // defaults
+    write = 0;      // don't write
+    read = 0;       // don't read
+    address = 32hxxxxxxxx; // don't care
+    dout = reg.q[PC];    // just put something on the bus for now
+    case(state.q) {
+      state.FETCH0:
+        //Set up the bus to get the instruction. This will get both halves of a 32 bit instruction
+        read=1;
+        address[31:1]=reg.q[PC][31:1];
+        address[0]=0;
+        reg.d[PC]=reg.q[PC]+2;
+        state.d=state.FETCH1;
+        shift_fe1.d=reg.q[PC][1]; //If this bit is set, we are unaligned.
+      state.FETCH1:
+        //Get the instruction into the instruction register
+        if(shift_fe1.q) {
+          ir.d[15:0]=din[31:16];
+          if((din[31:27]==5b11101) || (din[31:27]==5b11110) || (din[31:27]==5b11111)) {
+            //Set up the second halfword read
+            reg.d[PC]=reg.q[PC]+2;
+            read=1;
+            address[31:1]=reg.q[PC][31:1];
+            address[0]=0;
+            state.d=state.FETCH2;
+          } else {
+            //Only one halfword, so execute it
+            state.d=state.EXEC;
+          }
+        } else {
+          ir.d=din;
+          if((din[15:11]==5b11101) || (din[15:11]==5b11110) || (din[15:11]==5b11111)) {
+            //We already have the second halfword, just increment PC past it
+            reg.d[PC]=reg.q[PC]+2;
+          }
+          //Either way, we have the whole instruction, time to execute
+          state.d=state.EXEC;
+        }
+      state.EXEC:    
+        //Decode and execute the instruction, based on the model in section E.1. The model does this:
+        //1. Find all encoding diagrams that match the instruction. It is possible that no encoding diagrams match. 
+        //   In that case, abandon this execution model and consult the relevant instruction set chapter instead to 
+        //   find out how the instruction is to be treated. The bit pattern of such an instruction is usually reserved 
+        //   and UNDEFINED, though there are some other possibilities. For example, unallocated hint instructions are
+        //   documented as being reserved and to be executed as NOPs. [We use a bunch of IFs in parallel to check
+        //   whether an instruction matches the pattern decoded by this IF body.]
+        //2. If the operation pseudocode for the matching encoding diagrams starts with a condition check, perform 
+        //   that condition check. If the condition check fails, abandon this execution model and treat the 
+        //   instruction as a NOP. If there are multiple matching encoding diagrams, either all or none of their 
+        //   corresponding pieces of common pseudocode start with a condition check. [On an ARMv6M, the condition check
+        //   is hard-wired to be TRUE except for branch instructions, so most blocks don't include this]
+        //3. Perform the encoding-specific pseudocode for each of the matching encoding diagrams independently and in 
+        //   parallel. [This is the few lines of pseudocode that appears below each encoding diagram, the majority
+        //   of which is used to dig out each named field.] Each such piece of encoding-specific pseudocode starts
+        //   with a bitstring variable for each named bit or multi-bit field within its corresponding encoding diagram,
+        //   named the same as the bit or multi-bit field and initialized with the values of the corresponding bit or 
+        //   bits from the bit pattern of the instruction.
+        //
+        //   In a few cases, the encoding diagram contains more than one bit or field with the same name. When this 
+        //   occurs, the values of all of those bits or fields are expected to be identical, and the encoding-specific
+        //   pseudocode contains a special case using the Consistent() function to specify what happens if this is not 
+        //   the case. This function returns TRUE if all instruction bits or fields with the same name as its argument
+        //   have the same value, and FALSE otherwise.
+        //
+        //   If there are multiple matching encoding diagrams, all but one of the corresponding pieces of pseudocode 
+        //   must contain a special case that indicates that it does not apply. Discard the results of all such pieces
+        //   of pseudocode and their corresponding encoding diagrams. There is now one remaining piece of pseudocode
+        //   and its corresponding encoding diagram left to consider. This pseudocode might also contain a special 
+        //   case, most commonly one indicating that it is UNPREDICTABLE. If so, abandon this execution model and 
+        //   treat the instruction according to the special case.
+        //4. Check the should be bits of the encoding diagram against the corresponding bits of the bit pattern of 
+        //   the instruction. If any of them do not match, abandon this execution model and treat the instruction 
+        //   as UNPREDICTABLE.
+        //5. Perform the rest of the operation pseudocode for the instruction description that contains the encoding
+        //   diagram. That pseudocode starts with all variables set to the values they were left with by the 
+        //   encoding-specific pseudocode.
+        
+        //   We don't have any special UNDEFINED or UNPREDICTABLE handling yet. For now, the instructions just stop
+        //   processing once they reach such a case. Since all these blocks are running in parallel, one and only one 
+        //   of them will succeed in the normal case, and the UNDEFINED or UNPREDICTABLE cases will just stop, 
+        //   which I think will effectively be a NOP since no registers will be modified.
+        //Decode 16-bit instruction, based on section A5.2
+        if(ir.q[15:14]==2b00) {
+          //Shift (immediate), add, subtract, move, and compare on page A5-85
+          if(ir.q[13:9]==3b000xx) {
+            //LSL (immediate) on page A6-150
+            imm5=ir.q[10:6];
+            if(imm5==5b00000) {
+              //SEE mov (register)
+            } else {
+              d=c{0,ir.q[2:0]};
+              m=c{0,ir.q[5:3]};
+              setflags=1; //!InITBlock(), always TRUE in v6M
+              //imm5 is shift amount
+              result=reg.q[m]<<imm5;
+              reg.d[d]=result;
+              apsr.d[N]=result[31];
+              apsr.d[Z]=(result==0);
+//                apsr.d[C]= When we calculate carry, fill that in here
+            }
+          }
+          if(ir.q[13:9]==5b001xx) {
+            //LSR (immediate) on page A6-152
+          }
+          if(ir.q[13:9]==5b010xx) {
+            //ASR (immediate) on page A6-117
+          }
+          if(ir.q[13:9]==5b01100) {
+            //ADD (register) on page A6-109
+          }
+          if(ir.q[13:9]==5b01101) {
+            //SUB (register) on page A6-152
+          }
+          if(ir.q[13:9]==5b01110) {
+            //ADD (3-bit immediate) on page A6-107
+          }
+          if(ir.q[13:9]==5b01111) {
+            //SUB (3-bit immediate) on page A6-185
+          }
+          if(ir.q[13:9]==5b100xx) {
+            //MOV (immediate) on page A6-154
+            d=ir.q[10:8];
+            setflags=1; //!InITBlock(), always true in v6M
+            result=c{24b0,ir.q[7:0]};
+            reg.d[d]=result;
+            apsr.d[N]=0; //Can't be otherwise, since it's an 8-bit immediate that's zero extended
+            apsr.d[Z]=(result==32b0);
+          }
+          if(ir.q[13:9]==5b101xx) {
+            //CMP (immediate) on page A6-127
+          }
+          if(ir.q[13:9]==5b110xx) {
+            //ADD (8-bit immediate) on page A6-107
+          }
+          if(ir.q[13:9]==5b111xx) {
+            //SUB (8-bit immediate) on page A6-185
+          }
+        }
+        if(ir.q[15:10]==6b010000) {
+          //Data processing, page A5-86
+        }
+        if(ir.q[15:10]==6b010001) {
+          //Special data instructions and branch and exchange on page A5-87
+        }
+        if(ir.q[15:11]==5b01001) {
+          //Load from literal pool, see LDR (literal) on page A6-141
+        }
+        if((ir.q[15:12]==4b0101) || (ir.q[15:13]==3b011) || (ir.q[15:13]==3b100)) {
+          //Load/store single data item on page A5-88
+          if((ir.q[15:12]==4b0101)) {
+            //Load/Store Register, opA=0101
+            if(ir.q[11:9]==3b000) {
+              //STR (register) on page A6-179
+              //TODO - This writes a word-aligned address only! If the 
+              //address is not word-aligned, it ignores the lower 2 bits
+              //of the address and writes in the wrong place.
+              t=c{0,ir.q[2:0]};
+              n=c{0,ir.q[5:3]};
+              m=c{0,ir.q[8:6]};
+              //Set up the memory write. We don't need to go to the MEM states
+              //because the processor can do everything in this cycle.
+              write=1;
+              address=reg.q[n]+reg.q[m];
+              dout=reg.q[t];
+              state.d=state.FETCH0; //Done executing, go fetch the next instruction
+            }
+            if(ir.q[11:9]==3b001) {
+              //STRH (register) on page A6-183
+            }
+            if(ir.q[11:9]==3b010) {
+              //STRB (register) on page A6-181
+            }
+            if(ir.q[11:9]==3b011) {
+              //LDRSB (register) on page A6-148
+            }
+            if(ir.q[11:9]==3b100) {
+              //LDR (register) on page A6-143
+            }
+            if(ir.q[11:9]==3b101) {
+              //LDRH (register) on page A6-147
+            }
+            if(ir.q[11:9]==3b110) {
+              //LDRB (register) on page A6-145
+            }
+            if(ir.q[11:9]==3b111) {
+              //LDRSH (register) on page A6-149
+            }
+          }
+          if((ir.q[15:12]==4b0110) && (ir.q[11]==1b0)) {
+            //STR (immediate) on page A6-177
+          }
+          if((ir.q[15:12]==4b0110) && (ir.q[11]==1b1)) {
+            //LDR (immediate) on page A6-139
+          }
+          if((ir.q[15:12]==4b0111) && (ir.q[11]==1b0)) {
+            //STRB (immediate) on page A6-180
+          }
+          if((ir.q[15:12]==4b0111) && (ir.q[11]==1b1)) {
+            //LDRB (immediate) on page A6-144
+          }
+          if((ir.q[15:12]==4b1000) && (ir.q[11]==1b0)) {
+            //STRH (immediate) on page A6-182
+          }
+          if((ir.q[15:12]==4b1000) && (ir.q[11]==1b1)) {
+            //LDRH (immediate) on page A6-146
+          }
+          if((ir.q[15:12]==4b1001) && (ir.q[11]==1b0)) {
+            //STR (immediate, SP-relative) on page A6-177
+          }
+          if((ir.q[15:12]==4b1001) && (ir.q[11]==1b1)) {
+            //LDR (immediate, SP-relative) on page A6-139
+          }
+        }
+        if(ir.q[15:11]==5b10100) {
+          //Generate PC-relative address, see ADR on page A6-115
+        }
+        if(ir.q[15:11]==5b10101) {
+          //Generate SP-relative address, see ADD (SP plus immediate) on page A6-111
+        }
+        if(ir.q[15:12]==4b1011) {
+          //Miscelaneous 16-bit instructions on page A5-89
+        }
+        if(ir.q[15:11]==5b11000) {
+          //Store multiple registers, see STM, STMIA, STMEA on page A6-175
+        }
+        if(ir.q[15:11]==5b11001) {
+          //Load multiple registers, see LDM, LDMIA, LDMFD on page A6-137
+        }
+        if(ir.q[15:12]==4b1101) {
+          //Conditional branch, and Supervisor Call on page A5-90
+        }
+        if(ir.q[15:11]==5b11100) {
+          //Unconditional branch, see B on page A6-119
+        }
+      }
+  }
+}
