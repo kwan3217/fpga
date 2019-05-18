@@ -88,6 +88,7 @@ module cortexM0 (
         ir.d[31:16]=din[15:0];
         state.d=state.EXEC;
       state.EXEC:    
+        state.d=state.FETCH0; //The default case is to go back to FETCH0
         //Decode and execute the instruction, based on the model in section E.1. The model does this:
         //1. Find all encoding diagrams that match the instruction. It is possible that no encoding diagrams match. 
         //   In that case, abandon this execution model and consult the relevant instruction set chapter instead to 
@@ -136,15 +137,20 @@ module cortexM0 (
           if(ir.q[13:9]==3b000xx) {
             //LSL (immediate) on page A6-150
             imm5=ir.q[10:6];
-            if(imm5==5b00000) {
-              //SEE mov (register)
-            } else {
-              d=c{0,ir.q[2:0]};
-              m=c{0,ir.q[5:3]};
-              setflags=1; //!InITBlock(), always TRUE in v6M
-              //imm5 is shift amount
-              result=reg.q[m]<<imm5;
-              reg.d[d]=result;
+            d=c{0,ir.q[2:0]};
+            m=c{0,ir.q[5:3]};
+            setflags=1; //!InITBlock(), always TRUE in v6M
+//            if(imm5==5b00000) {
+              //SEE mov (register, encoding T2). In other words,
+              //MOV <Rd>, <Rm> is implemented as LSL <Rd>,<Rm>, #0. 
+              //No special case is required.
+              //The only difference is that setflags is alsways TRUE
+              //but it is anyway on v6M
+//            }
+            //imm5 is shift amount
+            result=reg.q[m]<<imm5;
+            reg.d[d]=result;
+            if(setflags) {
               apsr.d[N]=result[31];
               apsr.d[Z]=(result==0);
 //                apsr.d[C]= When we calculate carry, fill that in here
@@ -157,13 +163,31 @@ module cortexM0 (
             //ASR (immediate) on page A6-117
           }
           if(ir.q[13:9]==5b01100) {
-            //ADD (register) on page A6-109
+            //ADD (register, encoding T1) on page A6-109
+            d=c{0,ir.q[2:0]};
+            m=c{0,ir.q[5:3]};
+            n=c{0,ir.q[8:6]};
+            
+            result=reg.q[n]+reg.q[m];
+            reg.d[d]=result;
+            apsr.d[N]=result[31];
+            apsr.d[Z]=(result==32b0);
           }
           if(ir.q[13:9]==5b01101) {
             //SUB (register) on page A6-152
           }
           if(ir.q[13:9]==5b01110) {
-            //ADD (3-bit immediate) on page A6-107
+            //ADD (3-bit immediate, encoding T1) on page A6-107
+            d=ir.q[2:0];
+            n=ir.q[5:3];
+            setflags=1;
+            result=reg.q[n]+c{29b0,ir.q[8:6]};
+            reg.d[d]=result;
+            if(setflags) {
+              apsr.d[N]=result[31];
+              apsr.d[Z]=(result==32b0);
+              //Still need to do carry
+            }
           }
           if(ir.q[13:9]==5b01111) {
             //SUB (3-bit immediate) on page A6-185
@@ -174,14 +198,26 @@ module cortexM0 (
             setflags=1; //!InITBlock(), always true in v6M
             result=c{24b0,ir.q[7:0]};
             reg.d[d]=result;
-            apsr.d[N]=0; //Can't be otherwise, since it's an 8-bit immediate that's zero extended
-            apsr.d[Z]=(result==32b0);
+            if(setflags) {
+              apsr.d[N]=0; //Can't be otherwise, since it's an 8-bit immediate that's zero extended
+              apsr.d[Z]=(result==32b0);
+              //carry is unchanged
+            }
           }
           if(ir.q[13:9]==5b101xx) {
             //CMP (immediate) on page A6-127
           }
           if(ir.q[13:9]==5b110xx) {
-            //ADD (8-bit immediate) on page A6-107
+            //ADD (8-bit immediate, encoding T2) on page A6-107
+            d=ir.q[10:8];
+            n=d;
+            setflags=1;
+            result=reg.q[n]+c{24b0,ir.q[7:0]};
+            reg.d[d]=result;
+            if(setflags) {
+              apsr.d[N]=result[31];
+              apsr.d[Z]=(result==32b0);
+            }
           }
           if(ir.q[13:9]==5b111xx) {
             //SUB (8-bit immediate) on page A6-185
@@ -192,6 +228,30 @@ module cortexM0 (
         }
         if(ir.q[15:10]==6b010001) {
           //Special data instructions and branch and exchange on page A5-87
+          if(ir.q[9:6]==4b00xx) {
+            //ADD (register) on page A6-109
+          }
+          if(ir.q[9:6]==4b0101||ir.q[9:6]==4b011x) {
+            //CMP (register) on page A6-129
+          }
+          if(ir.q[9:6]==4b10xx) {
+            //MOV (register, encoding T1) on page A6-155
+            d=c{ir.q[7],ir.q[2:0]};
+            m=ir.q[6:3];
+            setflags=0;
+            result=reg.q[m];
+            reg.d[d]=result;
+            if(setflags) {
+              apsr.d[N]=result[31];
+              apsr.d[Z]=(result==0);
+            } 
+          }
+          if(ir.q[9:6]==4b110x) {
+            //BX on page A6-125
+          }
+          if(ir.q[9:6]==4b111x) {
+            //BLX (register) on page A6-124
+          }
         }
         if(ir.q[15:11]==5b01001) {
           //Load from literal pool, see LDR (literal) on page A6-141
@@ -213,7 +273,6 @@ module cortexM0 (
               write=1;
               address=reg.q[n]+reg.q[m];
               dout=reg.q[t];
-              state.d=state.FETCH0; //Done executing, go fetch the next instruction
             }
             if(ir.q[11:9]==3b001) {
               //STRH (register) on page A6-183
