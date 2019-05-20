@@ -179,7 +179,7 @@ module SN74x283 #(parameter N=4) (
   
 endmodule
 
-module ALUTopHalf #(parameter N=8,
+module ALU #(parameter N=8,
   parameter SIZE_86=4,
   parameter SIZE_283=4,
   parameter SIZE_244=8) (
@@ -232,7 +232,7 @@ module ALUTopHalf #(parameter N=8,
   
 endmodule
 
-module ALUZeroDet #(parameter N=8,
+module ZeroDet #(parameter N=8,
   parameter SIZE_02=4,
   parameter SIZE_08=4) (
   input [N-1:0] s,
@@ -257,7 +257,7 @@ module ALUZeroDet #(parameter N=8,
   assign zf=~tree_int[N-1];
 endmodule
 
-module ALU #(parameter N=8,
+module ALUFlags #(parameter N=8,
   parameter SIZE_86=4,
   parameter SIZE_283=4,
   parameter SIZE_244=8,
@@ -277,11 +277,13 @@ module ALU #(parameter N=8,
   output         zf);
 
   wire zf_int,cf_int;
-  ALUTopHalf #(.N(N),
+  wire [1:0] q_unused;
+  ALU #(.N(N),
                .SIZE_86(SIZE_86),
                .SIZE_283(SIZE_283),
                .SIZE_244(SIZE_244)) topHalf(.a(a),.b(b),.eo_(eo_),.su(su),.led(led),.bus(bus),.cf(cf));
-  ALUZeroDet #(.N(N),.SIZE_02(SIZE_02),.SIZE_08(SIZE_08)) zeroDet(led,zf_int);
-//  SN74x173 #(.N(SIZE_173)) flagReg(
+  ZeroDet #(.N(N),.SIZE_02(SIZE_02),.SIZE_08(SIZE_08)) zeroDet(led,zf_int);
+  assign zf = zf_int;
+  SN74x173 #(.N(SIZE_173)) flagReg(.d({cf_int,zf_int,'x,'x}),.q({cf,zf,q_unused}),.m(1'b0),.n(1'b0),.clk(clk),.clr(clr),.g1_(fi_),.g2_(fi_));
 
 endmodule
