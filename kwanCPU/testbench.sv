@@ -7,43 +7,46 @@ module test_full_add;
   reg clk;
   wire [N-1:0]bus;
   wire cf,zf;
+  wire cf_int,zf_int;
   
   // Instantiate design under test
-  ALUFlags #(8) dut (.a(a), .b(b), .su(su), .bus(bus), .cf(cf),.zf(zf),.eo_('0),.fi_('0),.clk(clk));
+  ALUFlags #(8) dut (.a(a), .b(b), .su(su), .bus(bus), .cf(cf),.zf(zf),.eo_('0),.fi_('0),.clk(clk),.cf_int(cf_int),.zf_int(zf_int));
           
   initial begin
     // Dump waves
     $dumpfile("dump.vcd");
     $dumpvars(1);
     
-    $display("All zero");
     a = 0;
     b = 0;
     su = 0;
-    clk=1;
+    clk=1;    //posedge
     display;
-    clk=~clk;
+    clk=~clk; //negedge
     display;
     
-    $display("a=1");
-    a = 34;
-    clk=~clk;
+    clk=~clk; //posedge
     display;
-    clk=~clk;
+    clk=~clk; //negedge
+    a = 34;  
     display;
 
-    $display("b=1");
+    clk=~clk; //posedge
+    display;
+    clk=~clk; //negedge
     b = 12;
-    clk=~clk;
-    display;
-    clk=~clk;
     display;
 
-    $display("su=1");
-    su = 1;
-    clk=~clk;
+    clk=~clk; //posedge
     display;
-    clk=~clk;
+    clk=~clk; //negedge
+    su = 1;
+    display;
+
+    clk=~clk; //posedge
+    display;
+    clk=~clk; //negedge
+    su = 1;
     display;
   end
   
