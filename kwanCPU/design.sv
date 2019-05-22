@@ -1,4 +1,17 @@
 // Design
+// Throughout this design, the following parameters shall be used consistently:
+// * N - Number of data bits a device can process - This is the number of gates
+//       in a gate array, number of channels in a multiplexer, etc. It's what makes
+//       an 8-bit computer 8-bit (N=8). Nearly all devices have an N parameter.
+// * A - Number of address bits in device - number of words in a memory, etc. The 
+//       memory address register as a special case will use A as its size parameter
+//       rather than N.
+// * SIZE_xxx - Size of the sub-devices a device uses. Parts in the 74xx series are
+//       typically 4-bit devices, and therefore a real physical implementation of an
+//       8-bit machine will typically have banks of two such devices. We simulate 
+//       that here. Rather than make an 8-gate NAND array, we use generate to make
+//       a bank of two 4-bit arrays. We use the SIZE_xxx to specify the default size
+//       of the 
 
 //Single full-adder
 module add1(input a,
@@ -23,17 +36,18 @@ module dff (
   input clk, 
   input reset,
   input d,
-  output q, 
+  output reg q, 
   output q_);
 
-  reg        q;
+//  reg        q;
 
   assign q_ = ~q;
 
-  always @(posedge clk or posedge reset)
+  always @(posedge clk)
   begin
     if (reset) begin
-      // Asynchronous reset when reset goes high
+      // Synchronous reset when reset goes high, based on recommendation in 
+      // Xilinx training material
       q <= 1'b0;
     end else begin
       // Assign D to Q on positive clock edge
@@ -46,14 +60,10 @@ endmodule
 module SN74x02 #(parameter N=4) (
   input  [N-1:0] a,
   input  [N-1:0] b,
-  output [N-1:0] y);
+  output [N-1:0] y
+);
 
-  genvar i;
-  generate
-    for(i=0;i<N;i=i+1) begin
-      assign y[i]=a[i]|~b[i];
-    end
-  endgenerate
+  assign y=a~|b;
 
 endmodule
 
@@ -61,14 +71,10 @@ endmodule
 module SN74x08 #(parameter N=4) (
   input  [N-1:0] a,
   input  [N-1:0] b,
-  output [N-1:0] y);
+  output [N-1:0] y
+);
 
-  genvar i;
-  generate
-    for(i=0;i<N;i=i+1) begin
-      assign y[i]=a[i] & b[i];
-    end
-  endgenerate
+  assign y=a & b;
 
 endmodule
 
@@ -76,14 +82,31 @@ endmodule
 module SN74x86 #(parameter N=4) (
   input  [N-1:0] a,
   input  [N-1:0] b,
-  output [N-1:0] y);
+  output [N-1:0] y
+);
 
-  genvar i;
-  generate
-    for(i=0;i<N;i=i+1) begin
-      assign y[i]=a[i]^b[i];
-    end
-  endgenerate
+  assign y=a^b;
+
+endmodule
+
+//2-to-1 multiplexer. By default, matches SN74x157
+module SN74x157 #(
+  parameter N=4
+) (
+  input  [N-1:0] p0,
+  input  [N-1:0] p1,
+  input          sel,
+  input          g_,
+  output [N-1:0] y
+);
+  wire sel0=~sel;
+  wire sel1= sel;
+  wire g=~g_;
+  wire [N-1:0] int0;
+  wire [N-1:0] int1;
+  assign int0=(p0 & {N{sel0 & g}});
+  assign int1=(p1 & {N{sel1 & g}});
+  assign y=int0 | int1;
 
 endmodule
 
@@ -142,7 +165,38 @@ module SN74x173 #(parameter N=4) (
  
 endmodule
 
+//16x4 bit RAM with tristate output and no clock (Weird!). 
+module SN74x189 #(
+  parameter N=4,
+  parameter A=4,
+  parameter DEPTH = 1<<A //Memory size is N*(2**A)
+) (
+  input      [A-1:0] a, 
+  input                       cs_,
+  input                       we_,
+  input      [N-1:0] d,
+  output reg [N-1:0] o_ 
+);
 
+  reg [N-1:0] memory_array [0:DEPTH-1]; 
+
+  always @(a,cs_,we_,d)
+  begin
+    if(~cs_) begin
+      if(~we_) begin
+        //Write operation - store data in memory, HiZ the output
+        memory_array[a] <= d;
+        o_<={N{1'bz}};
+      end else begin
+        //Read operation - put inverse of memory on output
+        o_<= ~memory_array[a];
+      end
+    end else begin
+      //Chip not selected - HiZ the output
+      o_<={N{1'bz}};
+    end
+  end
+endmodule
 
 //Tristate non-inverting buffer array with inverting control pins. By default matches SN74x244
 module SN74x244 #(parameter N=8) (
@@ -359,69 +413,168 @@ module register #(
 
 endmodule
 
-module mar #(
-  parameter ADR_SIZE=4,
+module memory_address_register #(
+  parameter A=4,
   parameter SIZE_173=4,
   parameter SIZE_157=4
 ) (
-  inout  [ADR_SIZE-1:0] bus,
-  input                 mi_,
-  input                 clk,
-  input                 clr,
-  output                a,   //This is fed both directly to the LEDs and to the address port of the memory
-  input  [ADR_SIZE-1:0] sw_mar, //switch bank used to manually program the memory
-  input                 prog,
-)
+  inout  [A-1:0] bus,
+  input          mi_,
+  input          clk,
+  input          clr,
+  output [A-1:0] a,   //This is fed both directly to the LEDs and to the address port of the memory
+  input  [A-1:0] sw_mar, //switch bank used to manually program the memory
+  input          prog
+);
+
+  wire   [A-1:0] q;
+
+  //Flip-flops
+  SN74x173 #(.N(SIZE_173)) u34(
+    .d(bus),
+    .q(q),
+    .m(1'b0),
+    .n(1'b0),
+    .g1_(mi_),
+    .g2_(mi_),
+    .clk(clk),
+    .clr(clr)
+  );
+
+  //Multiplexer to select either register or manual address
+  SN74x157 #(.N(SIZE_157)) u33(
+    .p0(sw_mar),
+    .p1(q),
+    .sel(prog),
+    .g_(1'b0),
+    .y(a)
+  );
+endmodule
+
+module random_access_memory #(
+  parameter N=8,
+  parameter A=4,
+  parameter SIZE_189=4,
+  parameter SIZE_157=4
+) (
+  input  [A-1:0] a,
+  inout  [N-1:0] bus,
+  input          ro_,  //RAM data out, active low
+  input          prog, //0 - use switches for memory address and data (manual program)
+                       //1 - use bus for memory data, MAR for address (normal run)
+  input          clk,
+  input          ri,   //RAM data in, active high
+  input  [N-1:0] sw_dat,
+  //No need for SW4 (manual program button) since we can do this with CLK in the test bench
+  output [N-1:0] memval,
+  //debug outputs
+  output         we_,
+  output [N-1:0] mux2mem,
+  output [N-1:0] mem2inv
+);
+
+  //Manual bus control
+  //SN74x244 #(.N(SIZE_244)) sw_buf(
+  //  .a1(sw_bus[3:0]),
+  //  .a2(sw_bus[7:4]),
+  //  .g1_(~sw_bus_en),
+  //  .g2_(~sw_bus_en),
+  //  .y1(bus[3:0]),
+  //  .y2(bus[7:4])
+  //);
+
+  //Data from bus output multiplexers (U26 and U27 on Ben 
+  //Eater's schematic) to memory chip inputs
+  wire [N-1:0] mux2mem; 
+  //Data from memory output to inverters
+  wire [N-1:0] mem2inv;
+  //wire         we_;
+
+  assign we_=ri ~& clk;
+
+  //Memory chip bank
+  genvar i;
+  generate
+    for(i=0;i<N/SIZE_189;i=i+1) begin
+      SN74x189 #(
+        .A(A),
+        .N(SIZE_189)
+      ) u12(
+        .o_(mem2inv[(i+1)*SIZE_189-1:i*SIZE_189]),
+        .d (mux2mem[(i+1)*SIZE_189-1:i*SIZE_189]),
+        .cs_(1'b0),
+        .we_(we_),
+        .a(a)
+      );
+    end
+  endgenerate
+
+  generate
+    for(i=0;i<N/SIZE_157;i=i+1) begin
+      SN74x157 #(
+        .N(SIZE_157)
+      ) u27(
+        .p0(sw_dat[(i+1)*SIZE_157-1:i*SIZE_157]),
+        .p1(bus   [(i+1)*SIZE_157-1:i*SIZE_157]),
+        .y(mux2mem[(i+1)*SIZE_157-1:i*SIZE_157]),
+        .sel(prog),
+        .g_(1'b0)
+      );
+    end
+  endgenerate
+  assign memval=~mem2inv;
+  
+
 
 endmodule
   
 
 module computer #(
-  parameter BUS_SIZE=8,
-  parameter ADR_SIZE=4,
+  parameter N=8,
+  parameter A=4,
   parameter SIZE_244=8
 ) (
-  input                 clk,
-  input                 clr,
-  input  [BUS_SIZE-1:0] sw_bus,
-  input                 sw_bus_en,
-  input  [BUS_SIZE-1:0] sw_mar,
-  input                 sw_mar_en,
+  input          clk,
+  input          clr,
+  input  [N-1:0] sw_dat,
+  input  [A-1:0] sw_mar,
+  input          prog, //0 - use switches for memory address and data (manual program)
+                       //1 - use bus for memory data, MAR for address (normal run)
   //We put all the observable (IE has LEDs in Ben Eater's design) things here as outputs.
-  output [BUS_SIZE-1:0] aval,
-  output [BUS_SIZE-1:0] bval,
-  output [BUS_SIZE-1:0] irval,
-  output [BUS_SIZE-1:0] aluval,
-  output [ADR_SIZE-1:0] marval,
-  output [BUS_SIZE-1:0] memval,
-  output [ADR_SIZE-1:0] pcval,
-  output [BUS_SIZE-1:0] outval,
-  output [BUS_SIZE-1:0] bus,
-  output                cf,
-  output                zf,
+  output [N-1:0] aval,
+  output [N-1:0] bval,
+  output [N-1:0] irval,
+  output [N-1:0] aluval,
+  output [A-1:0] marval,
+  output [N-1:0] memval,
+  output [A-1:0] pcval,
+  output [N-1:0] outval,
+  output [N-1:0] bus,
+  output         cf,
+  output         zf,
   //Displays for all control signals, all active high
   //We declare them inout here so that we can control them
   //from outside
-  inout                 hlt, // Halt clock
-  inout                 mi,  // Memory address register in
-  inout                 ri,  // RAM data in
-  inout                 ro,  // RAM data out
-  inout                 io,  // Instruction register out
-  inout                 ii,  // Instruction register in
-  inout                 ai,  // A register in
-  inout                 ao,  // A register out
-  inout                 eo,  // ALU out
-  inout                 su,  // ALU subtract
-  inout                 bi,  // B register in
-  inout                 oi,  // Output register in
-  inout                 ce,  // Program counter enable
-  inout                 co,  // Program counter out
-  inout                 j,   // Jump (program counter in)
-  inout                 fi   // Flags in
+  inout          hlt, // Halt clock
+  inout          mi,  // Memory address register in
+  inout          ri,  // RAM data in
+  inout          ro,  // RAM data out
+  inout          io,  // Instruction register out
+  inout          ii,  // Instruction register in
+  inout          ai,  // A register in
+  inout          ao,  // A register out
+  inout          eo,  // ALU out
+  inout          su,  // ALU subtract
+  inout          bi,  // B register in
+  inout          oi,  // Output register in
+  inout          ce,  // Program counter enable
+  inout          co,  // Program counter out
+  inout          j,   // Jump (program counter in)
+  inout          fi   // Flags in
 );
 
   //Register A
-  register #(.N(BUS_SIZE)) a (
+  register #(.N(N)) a (
     .bus(bus),
     .val(aval),
     .clk(clk),
@@ -431,7 +584,7 @@ module computer #(
   );
 
   //Register B
-  register #(.N(BUS_SIZE)) b (
+  register #(.N(N)) b (
     .bus(bus),
     .val(bval),
     .clk(clk),
@@ -441,7 +594,7 @@ module computer #(
   );
 
   //ALU/Flags
-  ALUFlags #(.N(BUS_SIZE)) alu (
+  ALUFlags #(.N(N)) alu (
     .a(aval),
     .b(bval),
     .eo_(~eo),
@@ -455,14 +608,18 @@ module computer #(
     .zf(zf)
   );
 
-  //Manual bus control
-  SN74x244 #(.N(SIZE_244)) sw_buf(
-    .a1(sw[3:0]),
-    .a2(sw[7:4]),
-    .g1_(~sw_en),
-    .g2_(~sw_en),
-    .y1(bus[3:0]),
-    .y2(bus[7:4])
+  //Memory address register
+  memory_address_register #(.A(A)) mar (
+    .bus(bus[A-1:0]),
+    .mi_(~mi),
+    .clk(clk),
+    .clr(clr),
+    .a(marval),
+    .sw_mar(sw_mar), //switch bank used to manually program the memory
+    .prog(prog)
   );
+
+  //Random access memory
   
+
 endmodule
