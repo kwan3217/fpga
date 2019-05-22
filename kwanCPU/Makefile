@@ -1,8 +1,8 @@
-dump.vcd: design.sv testbench.sv
+%.vcd: design.sv %.sv
 	iverilog '-Wall' $^ && vvp a.out
-	gtkwave dump.vcd
+	gtkwave $@
 
 clean:
-	$(RM) a.out dump.vcd
+	$(RM) a.out *.vcd
 
 
