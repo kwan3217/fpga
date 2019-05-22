@@ -171,8 +171,8 @@ module SN74x189 #(
   parameter DEPTH = 1<<A //Memory size is N*(2**A)
 ) (
   input      [A-1:0] a, 
-  input                       cs_,
-  input                       we_,
+  input              cs_,
+  input              we_,
   input      [N-1:0] d,
   output     [N-1:0] o_ 
 );

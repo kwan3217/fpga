@@ -1,5 +1,5 @@
-%.vcd: design.sv %.sv
-	iverilog '-Wall' $^ && vvp a.out
+%.vcd: sn74xx.sv cpu.sv %.sv
+	iverilog -Wall -g2005-sv $^ && vvp a.out
 	gtkwave $@
 
 clean:

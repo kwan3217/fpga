@@ -195,10 +195,12 @@ module memory_address_register #(
   input          clr,
   output [A-1:0] a,   //This is fed both directly to the LEDs and to the address port of the memory
   input  [A-1:0] sw_mar, //switch bank used to manually program the memory
-  input          prog
+  input          prog,
+  //debug displays
+  output [A-1:0] q
 );
 
-  wire   [A-1:0] q;
+  //wire   [A-1:0] q;
 
   //Flip-flops
   SN74x173 #(.N(SIZE_173)) u34(
@@ -226,7 +228,8 @@ module random_access_memory #(
   parameter N=8,
   parameter A=4,
   parameter SIZE_189=4,
-  parameter SIZE_157=4
+  parameter SIZE_157=4,
+  parameter SIZE_244=8
 ) (
   input  [A-1:0] a,
   inout  [N-1:0] bus,
@@ -236,7 +239,8 @@ module random_access_memory #(
   input          clk,
   input          ri,   //RAM data in, active high
   input  [N-1:0] sw_dat,
-  //No need for SW4 (manual program button) since we can do this with CLK in the test bench
+  input          sw4,  //Manual we_, default floating (high), push to write to memory
+  //Data from inverters to bus buffers, also used as display for memory contents
   output [N-1:0] memval,
   //debug outputs
   output         we_,
@@ -261,7 +265,7 @@ module random_access_memory #(
   wire [N-1:0] mem2inv;
   //wire         we_;
 
-  assign we_=ri ~& clk;
+  assign we_=prog?(ri ~& clk):sw4;
 
   //Memory chip bank
   genvar i;
@@ -293,10 +297,18 @@ module random_access_memory #(
       );
     end
   endgenerate
+
+  //Inverter bank - u29 and u28 in Ben Eater's design
   assign memval=~mem2inv;
-  
 
-
+  SN74x244 #(.N(SIZE_244)) u30 (
+    .a1(memval[3:0]),
+    .a2(memval[7:4]),
+    .g1_(ro_),
+    .g2_(ro_),
+    .y1(bus[3:0]),
+    .y2(bus[7:4])
+  );
 endmodule
   
 
