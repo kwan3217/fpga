@@ -132,50 +132,29 @@ module test_189;
     a=4'h0;
     d=4'h5;
     cs_=0;
-    we_=0;
-    display;
+    we_=0;   //active edge
+    display; 
 
     //Disable
-    cs_=1;
-    a=4'bz;
-    d=4'bz;
-    display;
-
-    //Write to address 1
+    we_=1;   //inactive edge
     a=4'h1;
     d=4'ha;
+    display; //1 to 2
+
+    //Write to address 1
+    we_=0;   //active edge
     cs_=0;
-    we_=0;
-    display;
+    display; //2 to 3
 
     //Disable
-    cs_=1;
-    a=4'bz;
+    we_=1;   //inactive edge
+    a=4'b0;
     d=4'bz;
-    display;
+    display; //3 to 4
 
     //Read back address 0
-    a=4'h0;
-    cs_=0;
-    we_=1;
-    display;
-
-    //Disable
-    cs_=1;
-    a=4'bz;
-    display;
-
-    //Read back address 1
     a=4'h1;
-    cs_=0;
-    we_=1;
-    display;
-
-    //Disable
-    cs_=1;
-    a=4'bz;
-    display;
-
+    display; //4 to 5
   end
   
   task display;
@@ -211,6 +190,7 @@ module test_ram;
   parameter HLT=8'hf0;
 
   random_access_memory #(.N(N),.A(A)) dut (
+    .a(sw_mar),
     .bus(bus),
     .ro_(1'b1),
     .prog(prog),

@@ -175,27 +175,18 @@ module SN74x189 #(
   input                       cs_,
   input                       we_,
   input      [N-1:0] d,
-  output reg [N-1:0] o_ 
+  output     [N-1:0] o_ 
 );
 
   reg [N-1:0] memory_array [0:DEPTH-1]; 
 
-  always @(a,cs_,we_,d)
+  //Make this edge-triggered on the write enable.
+  always @(negedge we_ & ~cs_)
   begin
-    if(~cs_) begin
-      if(~we_) begin
-        //Write operation - store data in memory, HiZ the output
-        memory_array[a] <= d;
-        o_<={N{1'bz}};
-      end else begin
-        //Read operation - put inverse of memory on output
-        o_<= ~memory_array[a];
-      end
-    end else begin
-      //Chip not selected - HiZ the output
-      o_<={N{1'bz}};
-    end
+    //Write operation - store data in memory, HiZ the output
+    memory_array[a] <= d;
   end
+  assign o_=(~cs_ & we_)?~memory_array[a]:{N{1'bz}};
 endmodule
 
 //Tristate non-inverting buffer array with inverting control pins. By default matches SN74x244
