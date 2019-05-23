@@ -343,20 +343,95 @@ module program_counter #(
     .y1(bus)
   );
 endmodule
-  
 
-module computer #(
+module control_unit #(  
   parameter N=8,
   parameter A=4,
+  parameter O=N-A,
+  parameter T=3,
+  parameter SIZE_163=4
+) (
+  input          clk_,// Out-of-phase clock
+  output         clr,
+  input          sw8, //Reset switch
+  input          cf,
+  input          zf,
+  input  [O-1:0] ir,
+  output         hlt, // Halt clock
+  output         mi,  // Memory address register in
+  output         ri,  // RAM data in
+  output         ro,  // RAM data out
+  output         io,  // Instruction register out
+  output         ii,  // Instruction register in
+  output         ai,  // A register in
+  output         ao,  // A register out
+  output         eo,  // ALU out
+  output         su,  // ALU subtract
+  output         bi,  // B register in
+  output         oi,  // Output register in
+  output         ce,  // Program counter enable
+  output         co,  // Program counter out
+  output         j,   // Jump (program counter in)
+  output         fi,  // Flags in
+  output [T-1:0] t    // subcycle phase
+);
+
+  wire [SIZE_163-T-1:0] qjunk;
+  wire                  phase_reset;
+
+  //Phase counter
+  SN74x163 #(.N(SIZE_163)) u48 (
+    .clk(clk_),
+    .clr_(~(clr|phase_reset)),
+    .p(1'b1),
+    .t(1'b1),
+    .load_(1'b1),
+    .d(4'b1),
+    .q({qjunk,t})
+  );
+
+  assign clr=sw8;
+
+  assign phase_reset=(t==4);
+
+  assign hlt=    (t==2  & (ir==15)                                    );
+  assign mi =    (t==0                                                )|
+                 (t==2  & (ir== 1|ir== 2|ir== 3|ir== 4|ir== 5)        );
+  assign ri =    (t==3  & (ir== 4)                                    );  
+  assign ro =    (t==1                                                )|
+                 (t==3  & (ir== 1|ir== 2|ir== 3)                      );
+  assign io =    (t==2  & (ir== 1|ir== 2|ir== 3|ir== 4|ir== 5|ir== 6) );
+  assign ii =    (t==1                                                );  
+  assign ai =    (t==2  & (ir== 5)                                    )|
+                 (t==3  & (ir== 1)                                    )|
+                 (t==4  & (ir== 2|ir== 3)                             );
+  assign ao =    (t==2  & (ir==14)                                    )|
+                 (t==3  & (ir== 4)                                    );
+  assign eo =    (t==4  & (ir== 2|ir== 3)                             );  
+  assign su =    (t==4  & (ir== 3)                                    );  
+  assign bi =    (t==3  & (ir== 2|ir== 3|ir== 4)                      );  
+  assign oi =    (t==2  & (ir==14)                                    );  
+  assign ce =    (t==1                                                );
+  assign co =    (t==0                                                );
+  assign j  =    (t==2  & (ir== 6|(ir==7&cf)|(ir==8&zf))              );  
+  assign fi =    (t==4  & (ir== 2|ir== 3)                             );  
+
+endmodule
+
+module computer #(
+  parameter N=8,   //Word size
+  parameter A=4,   //Address bus size
+  parameter O=N-A, //Number of bits in opcode (Opcode is high O bits of instruction, address is low N-O bits)
+  parameter T=3,   //Number of bits in subcycle counter
   parameter SIZE_244=8
 ) (
   input          clk,
-  input          clr,
   input  [N-1:0] sw_dat,
   input  [A-1:0] sw_mar,
   input          prog, //0 - use switches for memory address and data (manual program)
                        //1 - use bus for memory data, MAR for address (normal run)
   input          sw4,  //Use to manually toggle clock. Memory reads/writes occur on falling edge.
+  input          sw8,  //Reset switch
   //We put all the observable (IE has LEDs in Ben Eater's design) things here as outputs.
   output [N-1:0] aval,
   output [N-1:0] bval,
@@ -370,27 +445,31 @@ module computer #(
   output [N-1:0] bus,
   output         cf,
   output         zf,
+  output [2:0]   t,
   //Displays for all control signals, all active high
   //We declare them inout here so that we can control them
   //from outside
-  inout          hlt, // Halt clock
-  inout          mi,  // Memory address register in
-  inout          ri,  // RAM data in
-  inout          ro,  // RAM data out
-  inout          io,  // Instruction register out
-  inout          ii,  // Instruction register in
-  inout          ai,  // A register in
-  inout          ao,  // A register out
-  inout          eo,  // ALU out
-  inout          su,  // ALU subtract
-  inout          bi,  // B register in
-  inout          oi,  // Output register in
-  inout          ce,  // Program counter enable
-  inout          co,  // Program counter out
-  inout          j,   // Jump (program counter in)
-  inout          fi   // Flags in
+  output         hlt, // Halt clock
+  output         mi,  // Memory address register in
+  output         ri,  // RAM data in
+  output         ro,  // RAM data out
+  output         io,  // Instruction register out
+  output         ii,  // Instruction register in
+  output         ai,  // A register in
+  output         ao,  // A register out
+  output         eo,  // ALU out
+  output         su,  // ALU subtract
+  output         bi,  // B register in
+  output         oi,  // Output register in
+  output         ce,  // Program counter enable
+  output         co,  // Program counter out
+  output         j,   // Jump (program counter in)
+  output         fi,  // Flags in
+  //Debug stuff
+  output         clr
 );
 
+  
   //Register A
   register #(.N(N)) a (
     .bus(bus),
@@ -480,5 +559,32 @@ module computer #(
     .co_(~co),
     .pcval(pcval)
   );
+
+  control_unit #(.N(N),.A(A),.O(O),.T(T)) control (
+    .clk_(~clk),
+    .clr(clr),
+    .sw8(sw8),
+    .ir(irval[N-1:A]),
+    .cf(cf),
+    .zf(zf),
+    .hlt(hlt),
+    .mi(mi),  
+    .ri(ri),  
+    .ro(ro),  
+    .io(io),  
+    .ii(ii),  
+    .ai(ai),  
+    .ao(ao),  
+    .eo(eo),  
+    .su(su),  
+    .bi(bi),  
+    .oi(oi),  
+    .ce(ce),  
+    .co(co),  
+    .j(j),   
+    .fi(fi),
+    .t(t)
+  );
+
 
 endmodule
