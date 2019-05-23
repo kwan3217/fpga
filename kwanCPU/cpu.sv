@@ -147,7 +147,7 @@ endmodule
 module register #(
   parameter N=8,
   parameter SIZE_173=4,
-  parameter SIZE_244=4
+  parameter SIZE_244=8
 ) (
   inout  [N-1:0] bus,
   input          clk,
@@ -310,6 +310,39 @@ module random_access_memory #(
     .y2(bus[7:4])
   );
 endmodule
+
+module program_counter #(
+  parameter A=4,
+  parameter SIZE_163=4,
+  parameter SIZE_244=8
+) (  
+  inout  [A-1:0] bus,
+  input          clr_,
+  input          clk,
+  input          ce,
+  input          j_,
+  input          co_,
+  output [A-1:0] pcval
+);
+
+  SN74x163 #(.N(A)) u35(
+    .clk(clk),
+    .clr_(clr_),
+    .p(ce),
+    .t(ce),
+    .load_(j_),
+    .d(bus),
+    .q(pcval)
+  );
+
+  SN74x244 #(.N(SIZE_244)) u36(
+    .a1(pcval),
+    .a2(4'bx),
+    .g1_(co_),
+    .g2_(1'b1),
+    .y1(bus)
+  );
+endmodule
   
 
 module computer #(
@@ -425,7 +458,7 @@ module computer #(
   );
 
   //Random access memory
-    random_access_memory #(.N(N),.A(A)) ram (
+  random_access_memory #(.N(N),.A(A)) ram (
     .a(marval),
     .bus(bus),
     .ro_(~ro),
@@ -435,6 +468,17 @@ module computer #(
     .sw_dat(sw_dat),
     .sw4(sw4),
     .memval(memval)
+  );
+
+  //Program counter
+  program_counter #(.A(A)) pc (  
+    .bus(bus[A-1:0]),
+    .clr_(~clr),
+    .clk(clk),
+    .ce(ce),
+    .j_(~j),
+    .co_(~co),
+    .pcval(pcval)
   );
 
 endmodule

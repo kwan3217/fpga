@@ -21,6 +21,7 @@ module test_cpu;
   //Use regs for things which we may control from the outside.
   reg          ai,ao;    //A register control signals
   reg          bi;       //B register control signal
+  reg          ce,co,j;  //PC control signals
   reg          ii,io;    //IR control signals
   reg          oi;       //output register control signal
   reg          mi;       //MAR control signal
@@ -37,7 +38,7 @@ module test_cpu;
   wire cf,zf;
 
   wire [N-1:0] aval,bval,irval,aluval,oval;
-  wire [A-1:0] marval;
+  wire [A-1:0] marval,pcval;
   wire [N-1:0] memval;
 
   // Connect a reg xxx to a wire xxx_w to pass to an inout.
@@ -46,6 +47,10 @@ module test_cpu;
   assign ao_w=ao;
   wire   bi_w;
   assign bi_w=bi;
+  wire   ce_w,co_w,j_w;
+  assign ce_w=ce;
+  assign co_w=co;
+  assign j_w =j;
   wire   ii_w, io_w;
   assign ii_w=ii;
   assign io_w=io;
@@ -72,6 +77,7 @@ module test_cpu;
     .aval(aval),
     .bval(bval),
     .irval(irval),
+    .pcval(pcval),
     .oval(oval),
     .aluval(aluval),
     .marval(marval),
@@ -79,6 +85,7 @@ module test_cpu;
     .zf(zf),
     .ai(ai_w),.ao(ao_w),
     .bi(bi_w),
+    .ce(ce_w),.co(co_w),.j(j_w),
     .ii(ii_w),.io(io_w),
     .oi(oi_w),
     .fi(fi_w),.eo(eo_w),.su(su_w),
@@ -100,6 +107,7 @@ module test_cpu;
     mem[4'h0]=LDA | 4'd14;
     mem[4'h1]=ADD | 4'd15;
     mem[4'h2]=OUT        ;
+    mem[4'h3]=HLT        ;
     mem[4'he]=      8'h16;
     mem[4'hf]=      8'h2c;
     
@@ -107,6 +115,7 @@ module test_cpu;
     clk=0;
     ai=0; ao=0;
     bi=0;
+    ce=0; co=0; j=0;
     ii=0; io=0;
     oi=0;
     ri=0; ro=0;
@@ -121,10 +130,7 @@ module test_cpu;
 
     //Clock the registers once to do a synchronous reset
     clr=1;
-    display;
-    clk=1;
-    display;
-    clk=0;
+    #1 clk=1; #1 clk=0;
     clr=0;
     
     //store to memory image using switches
@@ -134,13 +140,10 @@ module test_cpu;
     mi='z;
     for(int i=0;i<16;i++) begin
       //step 0 - release the button and set the switches
-      sw4=1;
       sw_mar=i;        
       sw_dat=mem[i];
-      display;
       //step 1 - push the button
-      sw4=0; 
-      display;
+      #1 sw4=0; #1 sw4=1;
     end    
     sw4=1;
     clr=0;
@@ -154,108 +157,68 @@ module test_cpu;
     ri=0;
 
     //read memory image onto bus by manipulating the bus
+    clk=0;  //Lower clock
     for(int i=0;i<16;i++) begin
-      //step 0 - on low clock, force bus to correct address, don't read ram
-      clk=0;  //Lower clock
-      bus=i;  //Set bus to correct address
-      ro=0;   //Don't put memory output on bus
-      mi=1;   //      put bus into MAR
-      display;
-      //step 1 - raise clock
-      clk=1;
-      display;
-      //step 2 - lower clock, don't drive the bus externally, read ram
-      ro=1;
-      mi=0;
-      bus={N{'z}};
-      clk=0;
-      display;
-      //step 3 - raise clock
-      clk=1;
-      display;
+      //step 0 - force bus to correct address, don't read ram
+      bus=i;      ro=0; mi=1;
+      #1 clk=1; #1 clk=0;
+      //step 1 - don't drive the bus externally, read ram
+      bus={N{'z}};ro=1; mi=0;
+      #1 clk=1; #1 clk=0;
     end;
     ro=0;
 
     //Manually drive the control signals to load, add, and out (manually execute the program)
     //Fetch 0
-    bus=0;fetch;
+    fetch;
     
     //LDA
-    clk=0;
     io=1; mi=1;
-    display;
-    clk=1;
-    display;
+    #1 clk=1; #1 clk=0;
     io=0; mi=0;
 
-    clk=0;
     ro=1; ai=1;
-    display;
-    clk=1;
-    display;
+    #1 clk=1; #1 clk=0;
     ro=0; ai=0;
 
     //Fetch 1
-    bus=1;fetch;
+    fetch;
     
     //ADD
-    clk=0;
     io=1; mi=1;
-    display;
-    clk=1;
-    display;
+    #1 clk=1; #1 clk=0;
     io=0; mi=0;
 
-    clk=0;
     ro=1; bi=1;
-    display;
-    clk=1;
-    display;
+    #1 clk=1; #1 clk=0;
     ro=0; bi=0;
 
-    clk=0;
     eo=1; ai=1; fi=1;
-    display;
-    clk=1;
-    display;
+    #1 clk=1; #1 clk=0;
     eo=0; ai=0; fi=0;
 
     //Fetch 2
-    bus=2;fetch;
+    fetch;
     
     //OUT
-    clk=0;
     ao=1; oi=1;
-    display;
-    clk=1;
-    display;
+    #1 clk=1; #1 clk=0;
     ao=0; oi=0;
 
   end
 
   task fetch;
-    //Set bus before entering this task
     //cycle 0 - bus->mar
-    clk=0;
-    mi=1;
-    display;
-    clk=1;
-    display;
-    mi=0; bus={N{'z}};
+    co=1;mi=1;
+    #1 clk=1; #1 clk=0;
+    co=0;mi=0;
 
     //cycle 1 - ram->bus
-    clk=0;
-    ro=1; ii=1; //ce=1;
-    display;
-    clk=1;
-    display;
-    ro=0; ii=0; //ce=0;
+    ro=1; ii=1; ce=1;
+    #1 clk=1; #1 clk=0;
+    ro=0; ii=0; ce=0;
   endtask 
   
-  task display;
-    #1 $display("memval:%0h",memval);
-  endtask
-
 endmodule
 
 

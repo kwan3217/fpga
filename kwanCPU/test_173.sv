@@ -42,7 +42,7 @@ module test_173;
           
   initial begin
     // Dump waves
-    $dumpfile("dump.vcd");
+    $dumpfile("test_173.vcd");
     $dumpvars(1);
     
     d=4'b1010;

@@ -55,6 +55,31 @@ module dff (
   end
 endmodule
 
+module jkff (
+  input      clk,
+  input      reset,
+  input      j,
+  input      k,
+  output reg q,
+  output     q_
+);
+
+  assign q_ = ~q;
+
+  always @(posedge clk) begin
+    if (reset) begin
+      q<=0;
+    end else begin
+      case({j,k})
+        2'b00 : q <=    q;
+        2'b01 : q <= 1'b0;
+        2'b10 : q <= 1'b1;
+        2'b11 : q <=   ~q;
+      endcase
+    end
+  end
+endmodule
+
 //2-input NOR gate. By default, matches SN74x02
 module SN74x02 #(parameter N=4) (
   input  [N-1:0] a,
@@ -107,6 +132,71 @@ module SN74x157 #(
   assign int1=(p1 & {N{sel1 & g}});
   assign y=int0 | int1;
 
+endmodule
+
+//Programmable counter. By default, matches SN74x163A. Ben Eater's design uses a '161, 
+//but we use a:
+//  '163x because we like synchronous clear (in fact this doesn't even use the clear input)
+//  not A because the front end is too complicated, and this exercises the JK flipflop
+module SN74x163 #(parameter N=4) (
+  input  [N-1:0] d,
+  input          load_,
+  input          clk,
+  input          clr_,
+  input          p,
+  input          t,
+  output [N-1:0] q,
+  output         rco,
+  //Debug outputs
+  output [N-1:0] j,
+  output [N-1:0] k,
+  output [N-1:0] top,
+  output [N-1:0] mid,
+  output [N-1:0] bot,
+  output         ttop,
+  output [N-1:0] tmid,
+  output [N-1:0] q_,
+  output         en
+);
+
+  genvar i;
+  generate
+    for(i=0;i<N;i=i+1) begin
+      jkff jk(
+        .j(j[i]),
+        .k(k[i]),
+        .clk(clk),
+        .reset(1'b0),
+        .q(q[i]),
+        .q_(q_[i])
+      );
+    end
+  endgenerate
+
+  //input layer
+   and  (en     ,p    ,t);
+  nand  (ttop   ,load_,clr_);
+
+  //left layer
+  assign tmid[0]=en;
+   and  (tmid[1],q[0],en);
+   and  (tmid[2],q[0],q[1],en);
+   and  (tmid[3],q[0],q[1],q[2],en);
+   and  (rco    ,q[0],q[1],q[2],q[3],en);
+
+  //Middle layer
+  //   y = a   #b   ...
+  generate
+    for(i=0;i<N;i=i+1) begin
+      nand(top[i],ttop   ,bot[i]);
+       or (mid[i],tmid[i],ttop  );
+      nand(bot[i],d[i]   ,clr_  ,ttop);
+    end
+  endgenerate
+   
+  //right-most layer, up against the flipflops
+  assign j = top & mid;
+  assign k = mid & bot;
 endmodule
 
 //D-flipflop array. By default, matches SN74x173
