@@ -323,10 +323,12 @@ module computer #(
   input  [A-1:0] sw_mar,
   input          prog, //0 - use switches for memory address and data (manual program)
                        //1 - use bus for memory data, MAR for address (normal run)
+  input          sw4,  //Use to manually toggle clock. Memory reads/writes occur on falling edge.
   //We put all the observable (IE has LEDs in Ben Eater's design) things here as outputs.
   output [N-1:0] aval,
   output [N-1:0] bval,
   output [N-1:0] irval,
+  output [N-1:0] oval,
   output [N-1:0] aluval,
   output [A-1:0] marval,
   output [N-1:0] memval,
@@ -376,6 +378,26 @@ module computer #(
     .o_(1'b1) //B register is read-only in this machine
   );
 
+  //Instruction register
+  register #(.N(N)) ir (
+    .bus(bus),
+    .val(irval),
+    .clk(clk),
+    .clr(clr),
+    .i_(~ii),
+    .o_(~io)
+  );
+
+  //Output register. Since we are happy with the display in gtkwave, we don't need the 7-segment driver
+  register #(.N(N)) o (
+    .bus(bus),
+    .val(oval),
+    .clk(clk),
+    .clr(clr),
+    .i_(~oi),
+    .o_(1'b1) //B register is read-only in this machine
+  );
+
   //ALU/Flags
   ALUFlags #(.N(N)) alu (
     .a(aval),
@@ -403,6 +425,16 @@ module computer #(
   );
 
   //Random access memory
-  
+    random_access_memory #(.N(N),.A(A)) ram (
+    .a(marval),
+    .bus(bus),
+    .ro_(~ro),
+    .prog(prog),
+    .clk(clk),
+    .ri(ri),
+    .sw_dat(sw_dat),
+    .sw4(sw4),
+    .memval(memval)
+  );
 
 endmodule
