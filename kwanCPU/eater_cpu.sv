@@ -1,68 +1,105 @@
 // Design
+// This is a slavishly exact copy of the Ben eater CPU. The only exceptions are:
+// * There largely is no clock module, since the clock is driven from outside
+// * I use 74x244 in places instead of 74x245 (single-directional buffer instead 
+//   of bidirectional transceiver which is only used one way)
+// * I use 74x163 for my counter instead of 74x161 
+// * All memory cells are synchronous reset, following Xilinx recommendations
+// * There is no 7-segment display on the output register, since my simulator 
+//   does not require it
+// * Control logic is encoded directly, not using a ROM. I think this is still in
+//   the spirit of the Eater control logic, since it is still in this code in the
+//   form of a table, and it will almost certainly be encoded into lookup tables
+//   in an FPGA.
+// * Glue logic, particularly level shifters for active-low control signals,
+//   is implemented with Verilog operators instead of discrete 74xx modules. 
 // Throughout this design, the following parameters shall be used consistently:
 // * N - Number of data bits a device can process - This is the number of gates
 //       in a gate array, number of channels in a multiplexer, etc. It's what makes
 //       an 8-bit computer 8-bit (N=8). Nearly all devices have an N parameter.
 // * A - Number of address bits in device - number of words in a memory, etc. The 
 //       memory address register as a special case will use A as its size parameter
-//       rather than N. In this design, A must be strictly smaller than N, since
-//       an instruction is 1 word and is split between opcode bits and address bits.
-// In this design, all 74xx parts are expanded or contracted to their natural size,
-// and all gate arrays are implemented as Verilog operators rather than 74xx parts.
-// Sometimes it makes sense to copy a 74xx part and make it more uniform -- for instance
-// the 74x244 has two 4-bit ports which are always used together, so we make a bus_buffer
-// that has one noninverted control input and one N-bit port.
+//       rather than N.
+// * SIZE_xxx - Size of the sub-devices a device uses. Parts in the 74xx series are
+//       typically 4-bit devices, and therefore a real physical implementation of an
+//       8-bit machine will typically have banks of two such devices. We simulate 
+//       that here. Rather than make an 8-gate NAND array, we use generate to make
+//       a bank of two 4-bit arrays. We use the SIZE_xxx to specify the default size
+//       of the 
 
-module bus_interface #(
-  parameter N=8
-) (
-  input  [N-1:0] a,
-  input          g,
-  output [N-1:0] y
-);
-  
-  assign y=g?a:{N{1'bz}};
-endmodule
-
-module ALU #(
-  parameter N=8
-) (
+module ALU #(parameter N=8,
+  parameter SIZE_86=4,
+  parameter SIZE_283=4,
+  parameter SIZE_244=8) (
   input  [N-1:0] a,
   input  [N-1:0] b,
-  input          eo,
+  input          eo_,
   input          su,
   output [N-1:0] s_int,
   output [N-1:0] bus,
   output         cf);
 
   wire [N-1:0] b_int;
+  wire [N/SIZE_283:0] c_int;
+  assign c_int[0]=su;
 
   //Subtraction selector - if subtract is commanded, invert the B output. Use
   //a bank of XOR gates as controllable inverters.
-  assign b_int=b ^ {N{su}};
+  genvar i;
+  generate
+    for(i=0;i<N/SIZE_86;i=i+1) begin
+      SN74x86 #(SIZE_86) u18(
+        .a(b[(i+1)*SIZE_86-1:i*SIZE_86]),
+        .b({SIZE_86{su}}),
+        .y(b_int[(i+1)*SIZE_86-1:i*SIZE_86])
+      );
+    end
+  endgenerate
 
-  //Adding chain - use an appropriately sized '283
-  SN74x283 #(.N(N)) u21(
-        .a(a    ),
-        .b(b_int),
-        .c(su   ),
-        .s(s_int),
-        .k(cf   ));
+  //Adding chain - use a bank of '283 adders
+  generate
+    for(i=0;i<N/SIZE_283;i=i+1) begin
+      SN74x283 #(SIZE_283) u21(
+        .a(a    [(i+1)*SIZE_283-1:i*SIZE_283]),
+        .b(b_int[(i+1)*SIZE_283-1:i*SIZE_283]),
+        .c(c_int[i]),
+        .s(s_int[(i+1)*SIZE_283-1:i*SIZE_283]),
+        .k(c_int[i+1]));
+    end
+  endgenerate
+  assign cf=c_int[N/SIZE_283];
 
-  bus_interface #(.N(N)) u17(.a(s_int),
-                             .y(bus  ),
-                             .g(eo   ));
+  //Bus interface - use a bank of '244 buffers. I am not using a '245 like Ben did, because
+  //he never uses the bidirectional functionality, and because I haven't been able to get
+  //bidirectionality to work in Verilog yet.
+  generate
+    for(i=0;i<N/SIZE_244;i=i+1) begin
+      SN74x244 #(SIZE_244) u17(.a1(s_int[i*SIZE_244+SIZE_244/2-1:i*SIZE_244]),
+                               .y1(bus  [i*SIZE_244+SIZE_244/2-1:i*SIZE_244]),
+                               .g1_(eo_),
+                               .a2(s_int[(i+1)*SIZE_244-1:i*SIZE_244+SIZE_244/2]),
+                               .y2(bus  [(i+1)*SIZE_244-1:i*SIZE_244+SIZE_244/2]),
+                               .g2_(eo_));
+    end
+  endgenerate
   
 endmodule
 
-module ZeroDet #(
-  parameter N=8
-) (
+module ZeroDet #(parameter N=8,
+  parameter SIZE_02=4,
+  parameter SIZE_08=4) (
   input [N-1:0] s,
-  output        zf
-);
+  output        zf);
 
-  wire [N-1:0] tree_int;
+  //This code currently only works for N=8
+  //wire [3:0] tree1;
+  //wire [1:0] tree2;
+  //wire dc;
+  //SN74x02 #(.N(SIZE_02)) u22(.a(s[3:0]),.b(s[7:4]),.y(tree1));
+  //SN74x08 #(.N(SIZE_08)) u23(.a({tree1[0],tree1[1],tree2[0],'0}),
+  //                           .b({tree1[2],tree1[3],tree2[1],'0}),
+  //                           .y({tree2[0],tree2[1],zf,dc}));
+  wire [N:0] tree_int;
   assign tree_int[0]=s[0];
   genvar i;
   generate
@@ -73,12 +110,16 @@ module ZeroDet #(
   assign zf=~tree_int[N-1];
 endmodule
 
-module ALUFlags #(
-  parameter N=8
-) (
+module ALUFlags #(parameter N=8,
+  parameter SIZE_86=4,
+  parameter SIZE_283=4,
+  parameter SIZE_244=8,
+  parameter SIZE_02=4,
+  parameter SIZE_08=4,
+  parameter SIZE_173=4) (
   input  [N-1:0] a,
   input  [N-1:0] b,
-  input          eo,
+  input          eo_,
   input          su,
   input          fi_,
   input          clk,
@@ -92,22 +133,24 @@ module ALUFlags #(
   output         zf_int
 );
 
-  ALU #(.N(N)) alu (
+//  wire zf_int,cf_int;
+  wire [1:0] q_unused;
+  ALU #(.N(N), .SIZE_86(SIZE_86), .SIZE_283(SIZE_283), .SIZE_244(SIZE_244)) topHalf(
     .a(a),
     .b(b),
-    .eo(eo),
+    .eo_(eo_),
     .su(su),
     .s_int(s_int),
     .bus(bus),
     .cf(cf_int)
   );
-  ZeroDet #(.N(N)) zeroDet (
+  ZeroDet #(.N(N),.SIZE_02(SIZE_02),.SIZE_08(SIZE_08)) zeroDet(
     .s(s_int),
     .zf(zf_int)
   );
-  SN74x173 #(.N(2)) flagReg (
-    .d({cf_int,zf_int}),
-    .q({cf    ,zf    }),
+  SN74x173 #(.N(SIZE_173)) flagReg(
+    .d({cf_int,zf_int,'x,'x   }),
+    .q({cf    ,zf    ,q_unused}),
     .m(1'b0),.n(1'b0),
     .g1_(fi_),.g2_(fi_),
     .clk(clk),.clr(clr)
@@ -116,31 +159,49 @@ module ALUFlags #(
 endmodule
 
 module register #(
-  parameter N=8
+  parameter N=8,
+  parameter SIZE_173=4,
+  parameter SIZE_244=8
 ) (
   inout  [N-1:0] bus,
   input          clk,
   input          clr,
   input          i_,
-  input          o,
+  input          o_,
   output [N-1:0] val
 );
 
-  SN74x173 #(N) u12(
-    .d(bus),
-    .q(val),
-    .m(1'b0),.n(1'b0),
-    .g1_(i_),.g2_(i_),
-    .clk(clk),.clr(clr));
+  //storage - use a bank of 74x173 flipflop chips
+  genvar i;
+  generate
+    for(i=0;i<N/SIZE_173;i=i+1) begin
+      SN74x173 #(SIZE_173) u12(
+        .d(bus    [(i+1)*SIZE_173-1:i*SIZE_173]),
+        .q(val    [(i+1)*SIZE_173-1:i*SIZE_173]),
+        .m(1'b0),.n(1'b0),
+        .g1_(i_),.g2_(i_),
+        .clk(clk),.clr(clr));
+    end
+  endgenerate
 
-  bus_interface #(.N(N)) u17(.a(val),
-                             .y(bus),
-                             .g(o));
+  //bus interface - use a bank of 74x244 buffers
+  generate
+    for(i=0;i<N/SIZE_244;i=i+1) begin
+      SN74x244 #(SIZE_244) u17(.a1(val  [i*SIZE_244+SIZE_244/2-1:i*SIZE_244]),
+                               .y1(bus  [i*SIZE_244+SIZE_244/2-1:i*SIZE_244]),
+                               .g1_(o_),
+                               .a2(val  [(i+1)*SIZE_244-1:i*SIZE_244+SIZE_244/2]),
+                               .y2(bus  [(i+1)*SIZE_244-1:i*SIZE_244+SIZE_244/2]),
+                               .g2_(o_));
+    end
+  endgenerate
 
 endmodule
 
 module memory_address_register #(
-  parameter A=4
+  parameter A=4,
+  parameter SIZE_173=4,
+  parameter SIZE_157=4
 ) (
   inout  [A-1:0] bus,
   input          mi_,
@@ -156,7 +217,7 @@ module memory_address_register #(
   //wire   [A-1:0] q;
 
   //Flip-flops
-  SN74x173 #(.N(A)) u34(
+  SN74x173 #(.N(SIZE_173)) u34(
     .d(bus),
     .q(q),
     .m(1'b0),
@@ -168,7 +229,7 @@ module memory_address_register #(
   );
 
   //Multiplexer to select either register or manual address
-  SN74x157 #(.N(A)) u33(
+  SN74x157 #(.N(SIZE_157)) u33(
     .p0(sw_mar),
     .p1(q),
     .sel(prog),
@@ -179,11 +240,14 @@ endmodule
 
 module random_access_memory #(
   parameter N=8,
-  parameter A=4
+  parameter A=4,
+  parameter SIZE_189=4,
+  parameter SIZE_157=4,
+  parameter SIZE_244=8
 ) (
   input  [A-1:0] a,
   inout  [N-1:0] bus,
-  input          ro,   //RAM data out
+  input          ro_,  //RAM data out, active low
   input          prog, //0 - use switches for memory address and data (manual program)
                        //1 - use bus for memory data, MAR for address (normal run)
   input          clk,
@@ -191,60 +255,87 @@ module random_access_memory #(
   input  [N-1:0] sw_dat,
   input          sw4,  //Manual we_, default floating (high), push to write to memory
   //Data from inverters to bus buffers, also used as display for memory contents
-  output [N-1:0] memval
+  output [N-1:0] memval,
+  //debug outputs
+  output         we_,
+  output [N-1:0] mux2mem,
+  output [N-1:0] mem2inv
 );
 
+  //Manual bus control
+  //SN74x244 #(.N(SIZE_244)) sw_buf(
+  //  .a1(sw_bus[3:0]),
+  //  .a2(sw_bus[7:4]),
+  //  .g1_(~sw_bus_en),
+  //  .g2_(~sw_bus_en),
+  //  .y1(bus[3:0]),
+  //  .y2(bus[7:4])
+  //);
 
   //Data from bus output multiplexers (U26 and U27 on Ben 
   //Eater's schematic) to memory chip inputs
   wire [N-1:0] mux2mem; 
   //Data from memory output to inverters
   wire [N-1:0] mem2inv;
+  //wire         we_;
 
-  wire         we_;
   assign we_=prog?(ri ~& clk):sw4;
 
-  //Memory chip
-  SN74x189 #(
-    .A(A),
-    .N(N)
-  ) u12(
-    .o_(mem2inv),
-    .d (mux2mem),
-    .cs_(1'b0),
-    .we_(we_),
-    .a(a)
-  );
+  //Memory chip bank
+  genvar i;
+  generate
+    for(i=0;i<N/SIZE_189;i=i+1) begin
+      SN74x189 #(
+        .A(A),
+        .N(SIZE_189)
+      ) u12(
+        .o_(mem2inv[(i+1)*SIZE_189-1:i*SIZE_189]),
+        .d (mux2mem[(i+1)*SIZE_189-1:i*SIZE_189]),
+        .cs_(1'b0),
+        .we_(we_),
+        .a(a)
+      );
+    end
+  endgenerate
 
-  SN74x157 #(
-    .N(N)
-  ) u27(
-    .p0(sw_dat),
-    .p1(bus   ),
-    .y(mux2mem),
-    .sel(prog),
-    .g_(1'b0)
-  );
+  generate
+    for(i=0;i<N/SIZE_157;i=i+1) begin
+      SN74x157 #(
+        .N(SIZE_157)
+      ) u27(
+        .p0(sw_dat[(i+1)*SIZE_157-1:i*SIZE_157]),
+        .p1(bus   [(i+1)*SIZE_157-1:i*SIZE_157]),
+        .y(mux2mem[(i+1)*SIZE_157-1:i*SIZE_157]),
+        .sel(prog),
+        .g_(1'b0)
+      );
+    end
+  endgenerate
 
   //Inverter bank - u29 and u28 in Ben Eater's design
   assign memval=~mem2inv;
 
-  bus_interface #(.N(N)) u30 (
-    .a(memval),
-    .g(ro),
-    .y(bus)
+  SN74x244 #(.N(SIZE_244)) u30 (
+    .a1(memval[3:0]),
+    .a2(memval[7:4]),
+    .g1_(ro_),
+    .g2_(ro_),
+    .y1(bus[3:0]),
+    .y2(bus[7:4])
   );
 endmodule
 
 module program_counter #(
-  parameter A=4
+  parameter A=4,
+  parameter SIZE_163=4,
+  parameter SIZE_244=8
 ) (  
   inout  [A-1:0] bus,
   input          clr_,
   input          clk,
   input          ce,
   input          j_,
-  input          co,
+  input          co_,
   output [A-1:0] pcval
 );
 
@@ -258,10 +349,12 @@ module program_counter #(
     .q(pcval)
   );
 
-  bus_interface #(.N(A)) u36(
-    .a(pcval),
-    .g(co),
-    .y(bus)
+  SN74x244 #(.N(SIZE_244)) u36(
+    .a1(pcval),
+    .a2(4'bx),
+    .g1_(co_),
+    .g2_(1'b1),
+    .y1(bus)
   );
 endmodule
 
@@ -269,8 +362,8 @@ module control_unit #(
   parameter N=8,
   parameter A=4,
   parameter O=N-A,
-  parameter MAXPHASE=4,
-  parameter T=$clog2(MAXPHASE+1)
+  parameter T=3,
+  parameter SIZE_163=4
 ) (
   input          clk_,// Out-of-phase clock
   output         clr,
@@ -297,22 +390,32 @@ module control_unit #(
   output [T-1:0] t    // subcycle phase
 );
 
+  wire [SIZE_163-T-1:0] qjunk;
   wire                  phase_reset;
 
-  //Phase counter
-  SN74x163 #(.N(T)) u48 (
+  //Phase counter - This is the heartbeat of the machine.
+  SN74x163 #(.N(SIZE_163)) u48 (
     .clk(clk_),
     .clr_(~(clr|phase_reset)),
     .p(1'b1),
     .t(1'b1),
     .load_(1'b1),
-    .d({T{1'b1}}),
-    .q(t)
+    .d(4'b1),
+    .q({qjunk,t})
   );
 
   assign clr=sw8;
 
-  assign phase_reset=(t==MAXPHASE);
+  //Might add some logic such that if no control signals are active,
+  //we reset. 
+  assign phase_reset=(t==4);
+
+  //This is the brain of the machine. The following combinatorial logic
+  //determines which control signals are active based on the current
+  //phase and the current instruction. Note that this is an inversion
+  //of Ben's table, since his rows indicate instructions, and mine has
+  //rows indicate control signals. Also, there is a special case for
+  //the J control signal to handle JC and JZ.
 
   assign hlt=    (t==2  & (ir==15)                                    );
   assign mi =    (t==0                                                )|
@@ -340,7 +443,10 @@ endmodule
 
 module computer #(
   parameter N=8,   //Word size
-  parameter A=4    //Address bus size
+  parameter A=4,   //Address bus size
+  parameter O=N-A, //Number of bits in opcode (Opcode is high O bits of instruction, address is low N-O bits)
+  parameter T=3,   //Number of bits in subcycle counter
+  parameter SIZE_244=8
 ) (
   input          clk,
   input  [N-1:0] sw_dat,
@@ -394,7 +500,7 @@ module computer #(
     .clk(clk),
     .clr(clr),
     .i_(~ai),
-    .o(ao)
+    .o_(~ao)
   );
 
   //Register B
@@ -404,7 +510,7 @@ module computer #(
     .clk(clk),
     .clr(clr),
     .i_(~bi),
-    .o(1'b0) //B register is read-only in this machine
+    .o_(1'b1) //B register is read-only in this machine
   );
 
   //Instruction register
@@ -414,7 +520,7 @@ module computer #(
     .clk(clk),
     .clr(clr),
     .i_(~ii),
-    .o(io)
+    .o_(~io)
   );
 
   //Output register. Since we are happy with the display in gtkwave, we don't need the 7-segment driver
@@ -424,14 +530,14 @@ module computer #(
     .clk(clk),
     .clr(clr),
     .i_(~oi),
-    .o(1'b0) 
+    .o_(1'b1) //B register is read-only in this machine
   );
 
   //ALU/Flags
   ALUFlags #(.N(N)) alu (
     .a(aval),
     .b(bval),
-    .eo(eo),
+    .eo_(~eo),
     .su(su),
     .fi_(~fi),
     .clk(clk),
@@ -457,7 +563,7 @@ module computer #(
   random_access_memory #(.N(N),.A(A)) ram (
     .a(marval),
     .bus(bus),
-    .ro(ro),
+    .ro_(~ro),
     .prog(prog),
     .clk(clk),
     .ri(ri),
@@ -473,11 +579,11 @@ module computer #(
     .clk(clk),
     .ce(ce),
     .j_(~j),
-    .co(co),
+    .co_(~co),
     .pcval(pcval)
   );
 
-  control_unit #(.N(N),.A(A)) control (
+  control_unit #(.N(N),.A(A),.O(O),.T(T)) control (
     .clk_(~clk),
     .clr(clr),
     .sw8(sw8),

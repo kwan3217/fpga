@@ -2,22 +2,24 @@
 module test_cpu;
   //Computer size. Note that this is not yet freely settable in a computer based
   //on 74xx parts -- not all cpu modules properly handle all sizes yet.
-  parameter N=8;
-  parameter A=4;
-  parameter T=3;
+  parameter N=32;
+  parameter A=16;
+  parameter O=N-A;
+  parameter MAXPHASE=4;
+  parameter T=$clog2(MAXPHASE+1);
 
   //Assembly mnenomics
-  parameter NOP=8'h00;
-  parameter LDA=8'h10;
-  parameter ADD=8'h20;
-  parameter SUB=8'h30;
-  parameter STA=8'h40;
-  parameter LDI=8'h50;
-  parameter JMP=8'h60;
-  parameter JC =8'h70;
-  parameter JZ =8'h80;
-  parameter OUT=8'he0;
-  parameter HLT=8'hf0;
+  parameter NOP='h0<<A;
+  parameter LDA='h1<<A;
+  parameter ADD='h2<<A;
+  parameter SUB='h3<<A;
+  parameter STA='h4<<A;
+  parameter LDI='h5<<A;
+  parameter JMP='h6<<A;
+  parameter JC ='h7<<A;
+  parameter JZ ='h8<<A;
+  parameter OUT='he<<A;
+  parameter HLT='hf<<A;
 
   //Use regs for things which we may control from the outside.
   wire         ai,ao;    //A register control signals
@@ -47,7 +49,7 @@ module test_cpu;
   // Connect a reg xxx to a wire xxx_w to pass to an inout.
   wire [N-1:0] bus;
 
-  computer #(.N(8),.A(4)) dut (
+  computer #(.N(N),.A(A)) dut (
     .clk(clk & ~hlt),
     .sw8(sw8),
     .sw_dat(sw_dat),
@@ -80,22 +82,23 @@ module test_cpu;
 
   int mem[1<<A];
   initial begin
+    $display("LDA:%0h",LDA);
     // Dump waves
     $dumpfile("test_computer.vcd");
     $dumpvars(1);
 
     //Memory image
-    mem[4'h0]=LDA | 4'd14;
-    mem[4'h1]=ADD | 4'd15;
-    mem[4'h2]=OUT        ;
-    mem[4'h3]=STA | 4'd13;
-    mem[4'h4]=SUB | 4'd15;
-    mem[4'h5]=OUT        ;
-    mem[4'h6]=LDA | 4'd13;
-    mem[4'h7]=OUT        ;
-    mem[4'h8]=HLT        ;
-    mem[4'he]=      8'h16;
-    mem[4'hf]=      8'h2c;
+    mem['h000]=LDA | 'h00E;
+    mem['h001]=ADD | 'h00F;
+    mem['h002]=OUT        ;
+    mem['h003]=STA | 'hDDD;
+    mem['h004]=SUB | 'h00F;
+    mem['h005]=OUT        ;
+    mem['h006]=LDA | 'hDDD;
+    mem['h007]=OUT        ;
+    mem['h008]=HLT        ;
+    mem['h00e]=      8'h16;
+    mem['h00f]=      8'h2c;
     
     // Reset - deassert all control signals
     clk=0;

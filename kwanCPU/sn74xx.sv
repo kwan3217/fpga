@@ -154,7 +154,7 @@ module SN74x163 #(parameter N=4) (
   output [N-1:0] mid,
   output [N-1:0] bot,
   output         ttop,
-  output [N-1:0] tmid,
+  output [N  :0] tmid,
   output [N-1:0] q_,
   output         en
 );
@@ -179,10 +179,12 @@ module SN74x163 #(parameter N=4) (
 
   //left layer
   assign tmid[0]=en;
-   and  (tmid[1],q[0],en);
-   and  (tmid[2],q[0],q[1],en);
-   and  (tmid[3],q[0],q[1],q[2],en);
-   and  (rco    ,q[0],q[1],q[2],q[3],en);
+  generate
+    for(i=0;i<N;i=i+1) begin
+      and  (tmid[i+1],q[i],tmid[i]);
+    end
+  endgenerate
+  assign rco=tmid[N];
 
   //Middle layer
   //   y = a   #b   ...
