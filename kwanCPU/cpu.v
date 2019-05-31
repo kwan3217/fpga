@@ -24,6 +24,32 @@ module bus_interface #(
   assign y=g?a:{N{1'bz}};
 endmodule
 
+//16x4 bit RAM with tristate output and no clock (Weird!). 
+module ram_chip #(
+  parameter N=4,
+  parameter A=4,
+  parameter DEPTH = 1<<A //Memory size is N*(2**A)
+) (
+  input              clk,
+  input      [A-1:0] a, 
+  input              we,
+  input      [N-1:0] d,
+  output     [N-1:0] o
+);
+
+  reg [N-1:0] memory_array [0:DEPTH-1]; 
+
+  //Make this edge-triggered on the write enable.
+  always @(posedge clk)
+  begin
+    //Write operation - store data in memory, HiZ the output
+    memory_array[a] <= d;
+  end
+  assign o=memory_array[a];
+endmodule
+
+
+
 module ALU #(
   parameter N=8
 ) (
@@ -202,17 +228,17 @@ module random_access_memory #(
   wire [N-1:0] mem2inv;
 
   wire         we_;
-  assign we_=prog?(ri ~& clk):sw4;
+  assign we_=prog?ri & clk:sw4;
 
   //Memory chip
-  SN74x189 #(
+  ram_chip #(
     .A(A),
     .N(N)
   ) u12(
-    .o_(mem2inv),
-    .d (mux2mem),
-    .cs_(1'b0),
-    .we_(we_),
+    .o(memval),
+    .d(mux2mem),
+    .clk(clk),
+    .we(we),
     .a(a)
   );
 
@@ -225,9 +251,6 @@ module random_access_memory #(
     .sel(prog),
     .g_(1'b0)
   );
-
-  //Inverter bank - u29 and u28 in Ben Eater's design
-  assign memval=~mem2inv;
 
   bus_interface #(.N(N)) u30 (
     .a(memval),
@@ -298,6 +321,7 @@ module control_unit #(
 );
 
   wire                  phase_reset;
+  wire                  rco;
 
   //Phase counter
   SN74x163 #(.N(T)) u48 (
@@ -307,7 +331,8 @@ module control_unit #(
     .t(1'b1),
     .load_(1'b1),
     .d({T{1'b1}}),
-    .q(t)
+    .q(t),
+	 .rco(rco)
   );
 
   assign clr=sw8;

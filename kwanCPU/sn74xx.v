@@ -87,7 +87,7 @@ module SN74x02 #(parameter N=4) (
   output [N-1:0] y
 );
 
-  assign y=a~|b;
+  assign y=~(a|b);
 
 endmodule
 

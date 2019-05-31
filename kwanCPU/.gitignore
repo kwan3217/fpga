@@ -1,3 +1,8 @@
 a.out
 *.vcd
-
+*.[bnp]*
+xst/
+_*/
+*_map*.*
+iseconfig/
+planAhead*/

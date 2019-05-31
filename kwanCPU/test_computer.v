@@ -80,7 +80,7 @@ module test_cpu;
   );
 
 
-  int mem[1<<A];
+  reg mem[1<<A];
   initial begin
     $display("LDA:%0h",LDA);
     // Dump waves
@@ -103,7 +103,7 @@ module test_cpu;
     // Reset - deassert all control signals
     clk=0;
     //Disconnect manual programming switches
-    sw4='z;
+    sw4=1'bz;
     sw_mar={A{1'bz}};
     sw_dat={N{1'bz}};
 
@@ -116,7 +116,7 @@ module test_cpu;
     //memory address control
     prog=0;
     sw4=1;
-    for(int i=0;i<16;i++) begin
+    for(int i=0;i<16;i=i+1) begin
       //step 0 - release the button and set the switches
       sw_mar=i;        
       sw_dat=mem[i];
@@ -127,7 +127,7 @@ module test_cpu;
     sw8=0;
 
     //Disconnect manual switches
-    sw4='z;
+    sw4=1'bz;
     prog=1;
     sw_mar={A{1'bz}};
     sw_dat={N{1'bz}};
