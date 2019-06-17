@@ -1,7 +1,5 @@
 // Testbench
 module test_decode;
-  //Computer size. Note that this is not yet freely settable in a computer based
-  //on 74xx parts -- not all cpu modules properly handle all sizes yet.
   parameter XLEN=32;      //Size of registers
 
   reg  [31:0] inst;
@@ -18,8 +16,9 @@ module test_decode;
   //Execute outputs (mostly control signals)
   wire [ 1:0] A;     //ALU A source
   wire [ 1:0] B;     //ALU B source
-  wire [ 1:0] ALS;   //ALU Arith/Logic/Shift switch
-  wire [ 1:0] S;     //ALU Operation
+  wire [ 1:0] AL;    //ALU operation select
+  wire        SU;    //Subtract/SRA select
+  wire [ 1:0] SH;    //ALU/SHL/SHR select
   wire [ 2:0] O;     //ALU output
   wire        J;     //Load PC
   wire        EXC;   //Invalid instruction exception
@@ -37,8 +36,9 @@ module test_decode;
     .inst(inst),
     .A(A),     //ALU A source
     .B(B),     //ALU B source
-    .ALS(ALS),   //ALU Arith/Logic/Shift switch
-    .S(S),     //ALU Operation
+    .AL(AL),   //ALU Arith/Logic/Shift switch
+    .SU(SU),     //ALU Operation
+    .SH(SH),     //ALU Operation
     .O(O),     //ALU output
     .J(J),     //Load PC
     .EXC(EXC),   //Invalid instruction exception
@@ -53,21 +53,21 @@ module test_decode;
     $dumpvars(1);
 
     //Clock the registers once to do a synchronous reset
-    inst=32'hff010113; //addi sp, sp, -16
+    inst=32'hff010113; //addi sp, sp, -16  | addi x2, x2, -16
     #1;
-    inst=32'h00812623; //sw   s0,12(sp) 
+    inst=32'h00812623; //sw   s0,12(sp)    | sw   x8, x2 +12
     #1;
-    inst=32'h01010413; //addi s0,sp,16
+    inst=32'h01010413; //addi s0,sp,16     | addi x8, x2, 16
     #1;
-    inst=32'h02800793; //li   a5,52
+    inst=32'h02800793; //li   a5,52        | li   x15,
     #1;
-    inst=32'h00078513; //mv   a0,a5
+    inst=32'h00078513; //mv   a0,a5        | add  x10,x15,x0
     #1;
-    inst=32'h00c12403; //lw   s0,12(sp)
+    inst=32'h00c12403; //lw   s0,12(sp)    | lw   x8, x2 +12
     #1;
-    inst=32'h01010113; //addi sp,sp,16
+    inst=32'h01010113; //addi sp,sp,16     | addi x2, x2, 16
     #1;
-    inst=32'h00008067; //ret
+    inst=32'h00008067; //ret               | jalr x0, x1, 0
     #1;
 
   end

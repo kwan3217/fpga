@@ -146,14 +146,18 @@ module inst_parse #(
 endmodule
 
 module execute #(
-  parameter XLEN=32
+  parameter XLEN=32,
+  parameter NPHASE=4,
+  parameter NT=$clog2(NPHASE)
 ) (
   input  [31:0] inst,
+  input  [NT-1:0] t,
   output [ 1:0] A,     //ALU A source
   output [ 1:0] B,     //ALU B source
-  output [ 1:0] ALS,   //ALU Arith/Logic/Shift switch
-  output [ 1:0] S,     //ALU Operation
-  output [ 2:0] O,     //ALU output
+  output [ 1:0] AL,    //ALU operation
+  output        SU,    //ALU subtract/Shift mode switch
+  output [ 1:0] SH,    //Shift multiplexer
+  output [ 2:0] O,     //ALU output destination
   output        J,     //Load PC
   output        EXC,   //Invalid instruction exception
   output [ 4:0] rd,    //Output register 
@@ -200,32 +204,20 @@ module execute #(
   parameter SYSTEM  ={2'b11,3'b100,2'b11};
 
   //funct3 codes
-  //OP-IMM
-  parameter ADDI    =3'b000;
-  parameter SLTI    =3'b010;
-  parameter SLTIU   =3'b011;
-  parameter ANDI    =3'b111;
-  parameter ORI     =3'b110;
-  parameter XORI    =3'b100;
-
-  parameter SLLI    =3'b011;
-  parameter SRLI    =3'b101;
-  parameter SRAI    =SRLI;
-
   //OP
-  parameter ADD     =3'b000;
-  parameter SUB     =ADD;
-  parameter SLTI    =3'b010;
-  parameter SLTIU   =3'b011;
-  parameter ANDI    =3'b111;
-  parameter ORI     =3'b110;
-  parameter XORI    =3'b100;
+  parameter ADD    =3'b000;
+  parameter SUB    =ADD;    //distinguished by funct7[5]
+  parameter SLT    =3'b010;
+  parameter SLTU   =3'b011;
+  parameter AND    =3'b111;
+  parameter OR     =3'b110;
+  parameter XOR    =3'b100;
+  parameter SLL    =3'b001;
+  parameter SRL    =3'b101;
+  parameter SRA    =SRL;    //distinguished by funct7[5]
 
-  parameter SLLI    =3'bxxx;
-  parameter SRLI    =3'bxxx;
-  parameter SRAI    =3'bxxx;
-  
-  
+  //OP-IMM - exactly the same as OP
+    
   //A enumerations
   parameter AZERO    =2'b00;
   parameter ARS1     =2'b01;
@@ -236,77 +228,58 @@ module execute #(
   parameter BRS2     =2'b01;
   parameter BIMM     =2'b10;
 
-  //ALS enumerations
-  parameter AA=2'b00;
-  parameter AL=2'b01;
-  parameter AS=2'b10;
-
-  //S operation enumerations
+  //AL enumerations
   parameter AADD=2'b00;
-  parameter ASUB=2'b01;
-  parameter LOR =2'b00;
-  parameter LAND=2'b01;
-  parameter LXOR=2'b10;
-  parameter SSLL=2'b00; //Note that for these, bit 0 encodes ~left/right
-  parameter SSRL=2'b01; //                     bit 1 encodes ~logic/arith
-  parameter SSRA=2'b11;
+  parameter AAND=2'b01;
+  parameter AOR =2'b10;
+  parameter AXOR=2'b11;
 
+  //SH enumerations
+  parameter SALU=2'b00;
+  parameter SL  =2'b01;
+  parameter SR  =2'b00;
+  
   //Output enumerations
   parameter DIRECT=3'b000;
   parameter OSLT  =3'b001;
   parameter OSLTU =3'b010;
   parameter NEXTPC=3'b011;
   parameter TOR0  =3'b100;
+  parameter ADDR  =3'b101;
 
-  assign {A    ,B    ,ALS ,S   ,O     ,J   ,EXC}=
-     (valid==0)?
-         {2'bxx,2'bxx,2'bx,2'bx,3'bxxx,1'bx,1'b1}:
-     (opcode==OP_IMM)?(
-       (funct3==ADDI)?
-         {ARS1 ,BIMM ,AA  ,AADD,DIRECT,1'b0,1'b0}:
-       (funct3==SLTI)?
-         {ARS1 ,BIMM ,AA  ,ASUB,OSLT  ,1'b0,1'b0}:
-       (funct3==SLTIU)?
-         {ARS1 ,BIMM ,AA  ,ASUB,OSLTU ,1'b0,1'b0}:
-       (funct3==ANDI)?
-         {ARS1 ,BIMM ,AL  ,LAND,DIRECT,1'b0,1'b0}:
-       (funct3==ORI)?
-         {ARS1 ,BIMM ,AL  ,LOR ,DIRECT,1'b0,1'b0}:
-       (funct3==XORI)?
-         {ARS1 ,BIMM ,AL  ,LXOR,DIRECT,1'b0,1'b0}:
-       (funct3==SLLI)?
-         {ARS1 ,BIMM ,AS  ,SSLL,DIRECT,1'b0,1'b0}:
-       (funct3==SRLI)?
-         {ARS1 ,BIMM ,AS  ,SSRL,DIRECT,1'b0,1'b0}:
-       (funct3==SRAI)?
-         {ARS1 ,BIMM ,AS  ,SSRA,DIRECT,1'b0,1'b0}:
-         {2'bxx,2'bxx,2'bx,2'bx,3'bxxx,1'bx,1'b1}): //Default for OP-IMM not found
-     (opcode==LUI)?
-         {AZERO,BIMM ,AA  ,AADD,DIRECT,1'b0,1'b0}:
-     (opcode==AUIPC)?
-         {APC  ,BIMM ,AA  ,AADD,DIRECT,1'b0,1'b0}:
-     (opcode==OP)?(
+  assign {A    ,B    ,AL  ,SU       ,SH  ,O     ,J   ,EXC}=
+     (valid==1'b0)?
+         {2'bxx,2'bxx,2'bx,1'bx     ,2'bx,3'bxxx,1'bx,1'b1}:
+     (opcode==OP_IMM||opcode==OP)?(
        (funct3==ADD)?
-         {ARS1 ,BRS2 ,AA  ,AADD,DIRECT,1'b0,1'b0}:
+         {ARS1 ,opcode==OP?BIMM:BRS2,AADD,opcode==OP?funct7[5]:1'b0,SALU,DIRECT,1'b0,1'b0}:
        (funct3==SLT)?
-         {ARS1 ,BRS2 ,AA  ,ASUB,OSLT  ,1'b0,1'b0}:
+         {ARS1 ,opcode==OP?BIMM:BRS2,AADD,1'b1                     ,SALU,OSLT  ,1'b0,1'b0}:
        (funct3==SLTU)?
-         {ARS1 ,BRS2 ,AA  ,ASUB,OSLTU ,1'b0,1'b0}:
+         {ARS1 ,opcode==OP?BIMM:BRS2,AADD,1'b1                     ,SALU,OSLTU ,1'b0,1'b0}:
        (funct3==AND)?
-         {ARS1 ,BRS2 ,AL  ,LAND,DIRECT,1'b0,1'b0}:
+         {ARS1 ,opcode==OP?BIMM:BRS2,AAND,1'bx                     ,SALU,DIRECT,1'b0,1'b0}:
        (funct3==OR)?
-         {ARS1 ,BRS2 ,AL  ,LOR ,DIRECT,1'b0,1'b0}:
+         {ARS1 ,opcode==OP?BIMM:BRS2,AOR ,1'bx                     ,SALU,DIRECT,1'b0,1'b0}:
        (funct3==XOR)?
-         {ARS1 ,BRS2 ,AL  ,LXOR,DIRECT,1'b0,1'b0}:
+         {ARS1 ,opcode==OP?BIMM:BRS2,AXOR,1'bx                     ,SALU,DIRECT,1'b0,1'b0}:
        (funct3==SLL)?
-         {ARS1 ,BRS2 ,AS  ,SSLL,DIRECT,1'b0,1'b0}:
+         {ARS1 ,opcode==OP?BIMM:BRS2,2'bx,1'b0                     ,SL  ,DIRECT,1'b0,1'b0}:
        (funct3==SRL)?
-         {ARS1 ,BRS2 ,AS  ,SSRL,DIRECT,1'b0,1'b0}:
-       (funct3==SUB)?
-         {ARS1 ,BRS2 ,AA  ,ASUB,DIRECT,1'b0,1'b0}:
-       (funct3==SRA)?
-         {ARS1 ,BRS2 ,AS  ,SSRA,DIRECT,1'b0,1'b0}:
-         {2'bxx,2'bxx,2'bx,2'bx,3'bxxx,1'bx,1'b1}): //Default for OP-IMM not found
+         {ARS1 ,opcode==OP?BIMM:BRS2,2'bx,           funct7[5]     ,SR  ,DIRECT,1'b0,1'b0}:
+         {2'bxx,2'bxx               ,2'bx,1'bx                     ,2'bx,3'bxxx,1'bx,1'b1}): //Default for OP-IMM not found
+     (opcode==LUI)?
+         {AZERO,BIMM                ,AADD,1'b0                     ,SALU,DIRECT,1'b0,1'b0}:
+     (opcode==AUIPC)?
+         {APC  ,BIMM                ,AADD,1'b0                     ,SALU,DIRECT,1'b0,1'b0}:
+     (opcode==JAL)?
+         {APC  ,BIMM                ,AADD,1'b0                     ,SALU,NEXTPC,1'b1,1'b0}:
+     (opcode==JALR)?
+         {APC  ,BIMM                ,AADD,1'b0                     ,SALU,NEXTPC,1'b1,1'b0}:
+     (opcode==LOAD)?
+         {ARS1 ,BIMM                ,AADD,1'b0                     ,SALU,ADDR  ,1'b0,1'b0}:
+     (opcode==STORE)?
+         {ARS1 ,BIMM                ,AADD,1'b0                     ,SALU,ADDR  ,1'b0,1'b0}:
          {2'bxx,2'bxx,2'bx,2'bx,3'bxxx,1'bx,1'b1};  //Default for opcode not found
 
 
